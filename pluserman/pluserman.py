@@ -1,10 +1,12 @@
 # boiler plate portions shamelessly taken from flask's examples.
 
 
+import os
+
 from sqlite3 import dbapi2 as sqlite3
 from flask import Flask, request,  abort, _app_ctx_stack
 
-from utils import *
+from utils import DB, json_response, sqlite3_dict_factory
 
 DATABASE = '/tmp/pluserman.db'
 DEBUG = True
@@ -29,7 +31,7 @@ def get_db():
         sqlite_db = sqlite3.connect(app.config['DATABASE'])
         sqlite_db.execute("PRAGMA foreign_keys=on")
         sqlite_db.row_factory = sqlite3_dict_factory
-        top.sqlite_db = sqlite_db
+        top.sqlite_db = DB(sqlite_db)
     return top.sqlite_db
 
 
@@ -37,16 +39,21 @@ def init_db():
     """Creates the database tables."""
     with app.app_context():
         db = get_db()
-        with app.open_resource('main.sql', mode='r') as f:
-            db.cursor().executescript(f.read())
-        db.commit()
+
+        parent_dir = os.path.pardir
+        src_dir_name = os.path.split(__file__)[0]
+        dir_name = os.path.realpath(os.path.join(src_dir_name, parent_dir))
+
+        with app.open_resource(os.path.join(dir_name, 'main.sql'), mode='r') as f:
+            db.connection.cursor().executescript(f.read())
+        db.connection.commit()
 
 @app.teardown_appcontext
 def close_db_connection(exception):
     """Closes the database again at the end of the request."""
     top = _app_ctx_stack.top
     if hasattr(top, 'sqlite_db'):
-        top.sqlite_db.close()
+        top.sqlite_db.connection.close()
 
 @app.route('/')
 def index():
@@ -57,20 +64,20 @@ def index():
 def user_index():
     db = get_db()
     if request.method == 'GET':
-        return json_response(user_list(db))
+        return json_response(db.user_list())
 
     elif request.method == 'POST':
         user_data = request.get_json(force=True)
         if user_data is None:
             abort(HTTP_CODE_CLIENT_BAD_REQUEST)
 
-        if not validate_user_dict(db, user_data):
+        if not db.validate_user_dict(user_data):
             abort(HTTP_CODE_CLIENT_BAD_REQUEST)
 
-        if user_exists(db, user_data['userid']):
+        if db.user_exists(user_data['userid']):
             abort(HTTP_CODE_CONFLICT)
 
-        if user_create(db, user_data):
+        if db.user_create(user_data):
             return '', HTTP_CODE_CREATED
         abort(HTTP_CODE_SERVER_GENERIC_ERROR)
     abort(HTTP_CODE_SERVER_NOT_IMPLEMENTED)
@@ -80,14 +87,14 @@ def user_index():
 def user_handler_entry(userid):
     db = get_db()
 
-    if not user_exists(db, userid):
+    if not db.user_exists(userid):
         abort(HTTP_CODE_NOT_FOUND)
 
     if request.method == 'GET':
-        return json_response(user_details(db, userid))
+        return json_response(db.user_details(userid))
 
     elif request.method == 'DELETE':
-        if user_delete(db, userid):
+        if db.user_delete(userid):
             return '', HTTP_CODE_DELETED
         abort(HTTP_CODE_SERVER_GENERIC_ERROR)
 
@@ -100,17 +107,17 @@ def group_index():
     db = get_db()
 
     if request.method == 'GET':
-        return json_response(group_list(db))
+        return json_response(db.group_list())
 
     elif request.method == 'POST':
         if not request.form['name']:
             abort(HTTP_CODE_CLIENT_BAD_REQUEST)
 
         group_name = request.form['name']
-        if group_exists(db, group_name):
+        if db.group_exists(group_name):
             abort(HTTP_CODE_CONFLICT)
 
-        if group_create(db, group_name):
+        if db.group_create(group_name):
             return '', HTTP_CODE_CREATED
         abort(HTTP_CODE_SERVER_GENERIC_ERROR)
 
@@ -121,24 +128,32 @@ def group_index():
 def group_handler_entry(group_name):
     db = get_db()
 
-    if not group_exists(db, group_name):
+    if not db.group_exists(group_name):
         abort(HTTP_CODE_NOT_FOUND)
 
     if request.method == 'GET':
-        return json_response(group_get_members(db, group_name))
+        return json_response(db.group_get_members(group_name))
 
     elif request.method == 'PUT':
         group_members = request.get_json(force=True)
-        if group_set_members(db, group_name, group_members):
+        if db.group_set_members(group_name, group_members):
             return '', HTTP_CODE_OK
         abort(HTTP_CODE_UNPROCESSABLE_ENTITY)
 
     elif request.method == 'DELETE':
-        if group_delete(db, group_name):
+        if db.group_delete(group_name):
             return '', HTTP_CODE_DELETED
         abort(HTTP_CODE_SERVER_GENERIC_ERROR)
 
     abort(HTTP_CODE_SERVER_NOT_IMPLEMENTED)
 
+
+def main():
+    if not os.path.exists(DATABASE):
+        print "Calling init_db()"
+        init_db()
+
+    app.run(host="0.0.0.0")
+
 if __name__ == '__main__':
-    app.run()
+    main()
