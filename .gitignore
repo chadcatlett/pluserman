@@ -1,0 +1,14 @@
+*.py[co]
+*.egg
+*.egg-info
+dist
+build
+.idea
+.env
+.vagrant
+tmp
+*~
+*~~
+*.kate-swp
+*.bak
+.DS_Store
